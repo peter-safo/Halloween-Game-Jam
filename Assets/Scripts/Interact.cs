@@ -1,9 +1,18 @@
 using UnityEngine;
+using UnityEngine.UIElements.Experimental;
 
 public class Interact : MonoBehaviour
 {
     public float playerReach = 3f;
     Selectable currentSelect;
+    public int maxTagged = 5;
+    public int currentTagged;
+    public int monsterTagged;
+    private void Start()
+    {
+        currentTagged = 0;
+        monsterTagged = 0;
+    }
     // Update is called once per frame
     void Update()
     {
