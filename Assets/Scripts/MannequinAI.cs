@@ -1,145 +1,112 @@
+using System.Xml.Serialization;
 using UnityEngine;
+using UnityEngine.AI;
 
 public class MannequinAI : MonoBehaviour
 {
-    [Header("References")]
     public Transform player;
-    public Transform floor;
-
-    [Header("Movement Settings")]
-    public float moveSpeed = 1.5f;
+    public float wanderRadius = 8f;
+    public float wanderInterval = 3f;
     public float fieldOfViewAngle = 60f;
-    public float wanderRadius = 5f;
-    public float pauseTime = 2f;
+    public float stopDuration = 5f;
 
-    private Vector3 targetPosition;
-    private bool isPaused = false;
-    private float pauseTimer = 0f;
-    private float groundY;
+    private NavMeshAgent agent;
+    //private float timer;
+    private bool isVisible;
+    private float stopTimer;
+    private bool stopped;
+    private bool wasVisibleLastFrame;
 
     void Start()
     {
-        // Cache the mannequin's starting Y height to lock movement
-        groundY = transform.position.y;
-        ChooseNewTarget();
+        agent = GetComponent<NavMeshAgent>();
+        ChooseNewDestination();
     }
 
     void Update()
     {
         if (player == null) return;
 
-        bool isVisible = IsVisibleToPlayer();
+        isVisible = IsVisibleToPlayer();
 
         if (isVisible)
-            return; // Freeze when looked at
-
-        // Move toward target
-        float distance = Vector3.Distance(transform.position, targetPosition);
-        if (distance > 0.3f && !isPaused)
         {
-            Vector3 dir = (targetPosition - transform.position).normalized;
-
-            // Move only on the XZ plane
-            dir.y = 0;
-
-            transform.position += dir * moveSpeed * Time.deltaTime;
-
-            // Keep mannequin locked to floor height
-            transform.position = new Vector3(transform.position.x, groundY, transform.position.z);
-        }
-        else
-        {
-            HandlePauseAndRetarget();
+            agent.isStopped = true;
+            agent.velocity = Vector3.zero;
+            agent.updatePosition = false;
+            agent.updateRotation = false;
+            wasVisibleLastFrame = true;
+            return;
         }
 
-        // Keep it within the plane boundaries
-        ConstrainToPlane();
-    }
-
-    void HandlePauseAndRetarget()
-    {
-        if (!isPaused)
+        if (wasVisibleLastFrame && isVisible)
         {
-            isPaused = true;
-            pauseTimer = pauseTime;
+            StartPause();
+            wasVisibleLastFrame = false;
         }
-        else
+
+        agent.isStopped = false;
+        agent.updatePosition = true;
+        agent.updateRotation = true;
+
+        if (stopped)
         {
-            pauseTimer -= Time.deltaTime;
-            if (pauseTimer <= 0f)
+            stopTimer -= Time.deltaTime;
+            agent.velocity = Vector3.zero;
+            if (stopTimer <= 0f)
             {
-                isPaused = false;
-                ChooseNewTarget();
+                stopped = false;
+                ChooseNewDestination();
+            }
+            return;
+        }
+
+
+        if (!agent.pathPending && agent.remainingDistance <= agent.stoppingDistance)
+        {
+            if (!stopped)
+            {
+                stopped = true;
+                stopTimer = stopDuration;
+                agent.velocity = Vector3.zero;
+                agent.isStopped = true;
             }
         }
     }
 
-    void ChooseNewTarget()
+    void StartPause()
     {
-        // Pick a random point around current position on XZ plane
-        Vector2 randomCircle = Random.insideUnitCircle * wanderRadius;
-        Vector3 newTarget = new Vector3(randomCircle.x, 0, randomCircle.y);
-        targetPosition = transform.position + newTarget;
+        stopped = true;
+        stopTimer = stopDuration;
+        agent.velocity = Vector3.zero;
+        agent.isStopped = true;
+    }
 
-        // Clamp to plane if needed
-        ConstrainTargetToPlane();
+    void ChooseNewDestination()
+    {
+        Vector3 newPos = RandomNavSphere(transform.position, wanderRadius);
+        agent.SetDestination(newPos);
     }
 
     bool IsVisibleToPlayer()
     {
-        Vector3 direction = (transform.position - player.position).normalized;
-        float angle = Vector3.Angle(player.forward, direction);
+        Vector3 dir = (transform.position - player.position).normalized;
+        float angle = Vector3.Angle(player.forward, dir);
 
         if (angle < fieldOfViewAngle)
         {
-            if (Physics.Raycast(player.position, direction, out RaycastHit hit, 100f))
-            {
+            if (Physics.Raycast(player.position, dir, out RaycastHit hit, 100f))
                 return hit.transform == transform;
-            }
         }
         return false;
     }
 
-    void ConstrainToPlane()
+    public static Vector3 RandomNavSphere(Vector3 origin, float dist)
     {
-        if (floor == null) return;
-
-        // Assuming plane is centered at origin and scaled uniformly
-        Vector3 planeCenter = floor.position;
-        Vector3 planeSize = floor.localScale * 5f; // 1 unit scale = 10x10 plane in Unity
-
-        float halfWidth = planeSize.x / 2f;
-        float halfLength = planeSize.z / 2f;
-
-        float clampedX = Mathf.Clamp(transform.position.x, planeCenter.x - halfWidth, planeCenter.x + halfWidth);
-        float clampedZ = Mathf.Clamp(transform.position.z, planeCenter.z - halfLength, planeCenter.z + halfLength);
-
-        transform.position = new Vector3(clampedX, groundY, clampedZ);
+        Vector3 randomDirection = Random.insideUnitSphere * dist;
+        randomDirection += origin;
+        if (NavMesh.SamplePosition(randomDirection, out NavMeshHit hit, dist, NavMesh.AllAreas))
+            return hit.position;
+        return origin;
     }
-
-    void ConstrainTargetToPlane()
-    {
-        if (floor == null) return;
-
-        Vector3 planeCenter = floor.position;
-        Vector3 planeSize = floor.localScale * 5f;
-
-        float halfWidth = planeSize.x / 2f;
-        float halfLength = planeSize.z / 2f;
-
-        float clampedX = Mathf.Clamp(targetPosition.x, planeCenter.x - halfWidth, planeCenter.x + halfWidth);
-        float clampedZ = Mathf.Clamp(targetPosition.z, planeCenter.z - halfLength, planeCenter.z + halfLength);
-
-        targetPosition = new Vector3(clampedX, groundY, clampedZ);
-    }
-
-#if UNITY_EDITOR
-    void OnDrawGizmosSelected()
-    {
-        Gizmos.color = Color.red;
-        Gizmos.DrawWireSphere(transform.position, wanderRadius);
-        Gizmos.color = Color.green;
-        Gizmos.DrawSphere(targetPosition, 0.2f);
-    }
-#endif
 }
